@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>羽球 / 匹克球 線上預約系統</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
+    body { background-color: #f4f6f9; display: flex; justify-content: center; padding: 40px 20px; margin: 0; }
+    .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 100%; max-width: 520px; }
+    h2 { text-align: center; color: #2c3e50; margin-bottom: 25px; }
+    .form-group { margin-bottom: 20px; }
+    label { display: block; font-weight: bold; margin-bottom: 8px; color: #34495e; }
+    select, input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+    .slots-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
+    .slot-btn { padding: 10px 5px; border: 1px solid #007bff; background-color: white; color: #007bff; border-radius: 6px; font-size: 13px; cursor: pointer; text-align: center; }
+    .slot-btn:hover:not(:disabled) { background-color: #e7f1ff; }
+    .slot-btn.selected { background-color: #007bff; color: white; font-weight: bold; }
+    .slot-btn:disabled { border-color: #ddd; background-color: #f8f9fa; color: #aaa; cursor: not-allowed; }
+    
+    .price-box { background-color: #eef9f1; border: 1px dashed #28a745; padding: 12px; border-radius: 6px; margin-top: 15px; text-align: center; color: #1e7e34; font-size: 16px; font-weight: bold; }
+    .price-detail { font-size: 12px; color: #555; font-weight: normal; margin-top: 4px; }
+    
+    .submit-btn { width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+    .submit-btn:hover { background-color: #218838; }
+    #msg { text-align: center; margin-top: 15px; font-weight: bold; }
+    .success { color: #28a745; }
+    .error { color: #dc3545; }
+    .tip { font-size: 12px; color: #666; font-weight: normal; margin-left: 5px; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>羽球 / 匹克球 線上預約</h2>
+
+  <form id="bookingForm">
+    <div class="form-group">
+      <label for="sportType">1. 選擇球類運動：</label>
+      <select id="sportType" required>
+        <option value="羽球">羽球</option>
+        <option value="匹克球">匹克球</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="bookingDate">2. 選擇預約日期：</label>
+      <input type="date" id="bookingDate" required>
+    </div>
+
+    <div class="form-group">
+      <label>3. 選擇時段：<span class="tip">(可複選多個時段)</span></label>
+      <div id="slotsContainer" class="slots-grid">
+        <div style="grid-column: span 2; text-align: center; color: #888;">請先選擇日期</div>
+      </div>
+    </div>
+
+    <!-- 費用顯示區 -->
+    <div class="price-box" id="priceBox" style="display: none;">
+      預計費用：$<span id="totalPrice">0</span> 元
+      <div class="price-detail" id="priceDetail"></div>
+    </div>
+
+    <div class="form-group" style="margin-top: 15px;">
+      <label for="userName">預約人姓名：</label>
+      <input type="text" id="userName" placeholder="請輸入姓名" required>
+    </div>
+
+    <div class="form-group">
+      <label for="userPhone">預約人電話：</label>
+      <input type="tel" id="userPhone" placeholder="請輸入電話" required>
+    </div>
+
+    <button type="submit" class="submit-btn">確認預約</button>
+  </form>
+
+  <div id="msg"></div>
+</div>
+
+<script>
+  let selectedSlots = [];
+
+  // 取得台灣當前日期 (YYYY-MM-DD)，確保時區不會因為伺服器或瀏覽器落後一天
+  const now = new Date();
+  const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+  
+  const dateInput = document.getElementById('bookingDate');
+  dateInput.value = todayStr; // 預設選取今天
+  dateInput.min = todayStr;   // 限制最小日期為今天（無法選取過去的日期）
+
+  document.getElementById('bookingDate').addEventListener('change', fetchSlots);
+  document.getElementById('sportType').addEventListener('change', fetchSlots);
+
+  fetchSlots();
+
+  async function fetchSlots() {
+    const date = document.getElementById('bookingDate').value;
+    const sportType = document.getElementById('sportType').value;
+    const container = document.getElementById('slotsContainer');
+    selectedSlots = [];
+    updateTotalPrice();
+
+    if (!date) return;
+
+    try {
+      const response = await fetch(`/api/available-slots?date=${date}&sport_type=${encodeURIComponent(sportType)}`);
+      const data = await response.json();
+
+      if (data.slots) {
+        container.innerHTML = data.slots.map(slot => {
+          const isAvailable = slot.available;
+          const text = isAvailable ? `${slot.time_slot} (剩${slot.remaining_courts}場)` : `${slot.time_slot} (${slot.reason || '額滿'})`;
+          return `<button type="button" class="slot-btn" ${!isAvailable ? 'disabled' : ''} onclick="toggleSlot(this, '${slot.time_slot}')">${text}</button>`;
+        }).join('');
+      }
+    } catch (err) {
+      container.innerHTML = '<div style="grid-column: span 2; color: red; text-align: center;">時段載入失敗</div>';
+    }
+  }
+
+  function toggleSlot(btn, slot) {
+    if (selectedSlots.includes(slot)) {
+      selectedSlots = selectedSlots.filter(s => s !== slot);
+      btn.classList.remove('selected');
+    } else {
+      selectedSlots.push(slot);
+      btn.classList.add('selected');
+    }
+    updateTotalPrice();
+  }
+
+  // 💰 算錢邏輯：離峰 $400 / 尖峰 $600
+  function updateTotalPrice() {
+    const priceBox = document.getElementById('priceBox');
+    const totalPriceSpan = document.getElementById('totalPrice');
+    const priceDetailDiv = document.getElementById('priceDetail');
+
+    if (selectedSlots.length === 0) {
+      priceBox.style.display = 'none';
+      return;
+    }
+
+    const dateStr = document.getElementById('bookingDate').value;
+    if (!dateStr) return;
+
+    const selectedDate = new Date(dateStr);
+    const dayOfWeek = selectedDate.getDay(); // 0 是週日，6 是週六
+    const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+
+    let totalPrice = 0;
+    let offPeakCount = 0;
+    let peakCount = 0;
+
+    selectedSlots.forEach(slot => {
+      const startHour = parseInt(slot.split(':')[0], 10);
+      
+      if (isWeekend) {
+        peakCount++;
+        totalPrice += 600;
+      } else {
+        if (startHour >= 8 && startHour < 18) {
+          offPeakCount++;
+          totalPrice += 400;
+        } else {
+          peakCount++;
+          totalPrice += 600;
+        }
+      }
+    });
+
+    totalPriceSpan.innerText = totalPrice;
+    let detailText = [];
+    if (offPeakCount > 0) detailText.push(`離峰(${offPeakCount}小時 × $400)`);
+    if (peakCount > 0) detailText.push(`尖峰(${peakCount}小時 × $600)`);
+    priceDetailDiv.innerText = detailText.join(' + ');
+
+    priceBox.style.display = 'block';
+  }
+
+  document.getElementById('bookingForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msgDiv = document.getElementById('msg');
+    msgDiv.innerText = '';
+    msgDiv.className = '';
+
+    if (selectedSlots.length === 0) {
+      msgDiv.innerText = '請至少選擇一個預約時段！';
+      msgDiv.className = 'error';
+      return;
+    }
+
+    const payload = {
+      date: document.getElementById('bookingDate').value,
+      sport_type: document.getElementById('sportType').value,
+      time_slots: selectedSlots,
+      name: document.getElementById('userName').value,
+      phone: document.getElementById('userPhone').value
+    };
+
+    try {
+      const response = await fetch('/api/book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        msgDiv.innerText = result.message || '預約成功！';
+        msgDiv.className = 'success';
+        fetchSlots();
+      } else {
+        msgDiv.innerText = result.error || '預約失敗，請重試。';
+        msgDiv.className = 'error';
+      }
+    } catch (err) {
+      msgDiv.innerText = '系統連線錯誤，請稍後再試。';
+      msgDiv.className = 'error';
+    }
+  });
+</script>
+
+</body>
+</html>
