@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
     body { background-color: #f4f6f9; margin: 0; padding: 30px 20px; display: flex; justify-content: center; }
-    .container { width: 100%; max-width: 1100px; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+    .container { width: 100%; max-width: 1200px; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
     h2 { color: #2c3e50; margin-top: 0; }
     .login-box { max-width: 400px; margin: 80px auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
     .form-group { margin-bottom: 15px; }
@@ -17,6 +17,7 @@
     .btn-primary { background-color: #007bff; color: white; width: 100%; }
     .btn-danger { background-color: #dc3545; color: white; padding: 6px 12px; font-size: 13px; }
     .btn-secondary { background-color: #6c757d; color: white; float: right; }
+    .btn-sm { padding: 4px 8px; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
     th { background-color: #f8f9fa; color: #333; }
@@ -30,7 +31,10 @@
     .paid-text { font-size: 13px; font-weight: bold; }
     .text-paid { color: #28a745; }
     .text-unpaid { color: #dc3545; }
-    .price-tag { font-weight: bold; color: #d9534f; font-size: 15px; }
+    .price-tag { font-weight: bold; color: #d9534f; font-size: 15px; cursor: pointer; border-bottom: 1px dashed #d9534f; }
+    .price-tag:hover { color: #c9302c; }
+    .price-input { width: 80px; padding: 4px; font-size: 14px; }
+    .created-time { font-size: 12px; color: #666; font-family: monospace; }
     #loginMsg { margin-top: 10px; color: red; text-align: center; }
     .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   </style>
@@ -65,12 +69,12 @@
   <table>
     <thead>
       <tr>
-        <th>預約時間</th>
-        <th>場地</th>
+        <th>訂場時間</th>
+        <th>預約時段</th>
         <th>運動</th>
         <th>姓名</th>
         <th>電話</th>
-        <th>應收金額</th>
+        <th>應收金額 (點擊可修改)</th>
         <th>已收款</th>
         <th>操作</th>
       </tr>
@@ -85,6 +89,17 @@
 
 <script>
   checkAuth();
+
+  // 每 3 秒檢查一次後端，若超過 10 分鐘無人預約，自動在後台畫面上跳出「測試」彈窗並防休眠
+  setInterval(async () => {
+    try {
+      const res = await fetch('/api/admin/check-alert');
+      const data = await res.json();
+      if (data && data.showAlert) {
+        alert('測試');
+      }
+    } catch (e) {}
+  }, 3000);
 
   async function checkAuth() {
     try {
@@ -152,7 +167,7 @@
         let html = '';
         let lastDate = '';
 
-        mergedBookings.forEach(group => {
+        mergedBookings.forEach((group, index) => {
           if (group.booking_date !== lastDate) {
             lastDate = group.booking_date;
             const weekDay = getWeekDayName(lastDate);
@@ -168,8 +183,8 @@
 
           html += `
             <tr>
+              <td><span class="created-time">${group.created_at || '無紀錄'}</span></td>
               <td><b>${group.time_range}</b></td>
-              <td><b>${group.court_id} 號場</b></td>
               <td>
                 <span class="tag ${group.sport_type === '羽球' ? 'tag-badminton' : 'tag-pickleball'}">
                   ${group.sport_type}
@@ -177,7 +192,14 @@
               </td>
               <td>${group.user_name}</td>
               <td>${group.user_phone}</td>
-              <td><span class="price-tag">$${group.totalPrice}</span></td>
+              <td>
+                <span id="price-display-${index}" class="price-tag" title="點擊修改金額" onclick="enableEditPrice(${index})">$${group.totalPrice}</span>
+                <div id="price-edit-${index}" style="display:none; align-items: center; gap: 5px;">
+                  <input type="number" id="price-input-${index}" class="price-input" value="${group.totalPrice}">
+                  <button class="btn-primary btn-sm" onclick="savePrice(${idsJson}, ${index})">好</button>
+                  <button class="btn-secondary btn-sm" onclick="cancelEditPrice(${index}, ${group.totalPrice})">✕</button>
+                </div>
+              </td>
               <td>
                 <input type="checkbox" class="checkbox-paid" ${isPaid ? 'checked' : ''} 
                        onchange="togglePayment(${idsJson}, this.checked)">
@@ -213,7 +235,6 @@
     }
   }
 
-  // 合併連續時段並加總金額
   function mergeConsecutiveBookings(bookings) {
     const groups = [];
 
@@ -222,7 +243,6 @@
 
       const prev = groups.find(g => 
         g.booking_date === b.booking_date &&
-        g.court_id === b.court_id &&
         g.sport_type === b.sport_type &&
         g.user_name === b.user_name &&
         g.user_phone === b.user_phone &&
@@ -232,12 +252,11 @@
       if (prev) {
         prev.endHour = endHour;
         prev.ids.push(b.id);
-        prev.totalPrice += (b.price || 0); // 累加金額
+        prev.totalPrice += (b.price || 0); 
         if (!b.is_paid) prev.is_paid = 0; 
       } else {
         groups.push({
           booking_date: b.booking_date,
-          court_id: b.court_id,
           sport_type: b.sport_type,
           user_name: b.user_name,
           user_phone: b.user_phone,
@@ -245,9 +264,21 @@
           endHour: endHour,
           totalPrice: b.price || 0,
           is_paid: b.is_paid || 0,
+          created_at: b.created_at, 
           ids: [b.id]
         });
       }
+    });
+
+    groups.sort((a, b) => {
+      if (a.booking_date !== b.booking_date) {
+        return a.booking_date.localeCompare(b.booking_date);
+      }
+      const nameCompare = a.user_name.localeCompare(b.user_name, 'zh-Hant');
+      if (nameCompare !== 0) {
+        return nameCompare;
+      }
+      return a.startHour - b.startHour;
     });
 
     return groups.map(g => {
@@ -258,6 +289,47 @@
         time_range: `${startStr} - ${endStr}`
       };
     });
+  }
+
+  // 點擊金額開啟修改框
+  function enableEditPrice(index) {
+    document.getElementById(`price-display-${index}`).style.display = 'none';
+    document.getElementById(`price-edit-${index}`).style.display = 'flex';
+    document.getElementById(`price-input-${index}`).focus();
+  }
+
+  // 取消修改金額
+  function cancelEditPrice(index, originalPrice) {
+    document.getElementById(`price-input-${index}`).value = originalPrice;
+    document.getElementById(`price-edit-${index}`).style.display = 'none';
+    document.getElementById(`price-display-${index}`).style.display = 'inline';
+  }
+
+  // 儲存修改後的金額（自動平分到該筆合併訂單底下的所有時段 id 中）
+  async function savePrice(ids, index) {
+    const newTotal = parseFloat(document.getElementById(`price-input-${index}`).value);
+    if (isNaN(newTotal) || newTotal < 0) {
+      alert('請輸入有效的金額');
+      return;
+    }
+
+    // 將金額平均分配給合併的各個小單（避免資料庫金額落差）
+    const pricePerItem = Math.round(newTotal / ids.length);
+
+    try {
+      // 逐筆更新該組合下的價格
+      for (let i = 0; i < ids.length; i++) {
+        const p = (i === ids.length - 1) ? (newTotal - pricePerItem * (ids.length - 1)) : pricePerItem;
+        await fetch('/api/admin/bookings/price', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: ids[i], price: p })
+        });
+      }
+      fetchBookings();
+    } catch (err) {
+      alert('更新金額失敗');
+    }
   }
 
   async function togglePayment(ids, isPaid) {

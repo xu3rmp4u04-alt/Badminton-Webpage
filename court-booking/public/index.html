@@ -68,7 +68,7 @@
 
     <div class="form-group">
       <label for="userPhone">預約人電話：</label>
-      <input type="tel" id="userPhone" placeholder="請輸入電話" required>
+      <input type="tel" id="userPhone" placeholder="請輸入手機號碼 (例如: 0912345678)" required>
     </div>
 
     <button type="submit" class="submit-btn">確認預約</button>
@@ -183,6 +183,19 @@
     msgDiv.innerText = '';
     msgDiv.className = '';
 
+    const phoneVal = document.getElementById('userPhone').value.trim();
+    // 嚴格檢查台灣手機號碼格式 (09 開頭，共 10 碼數字)
+    const phoneRegex = /^09\d{8}$/;
+
+    if (!phoneRegex.test(phoneVal)) {
+      msgDiv.innerText = '電話格式不符，請輸入正確的手機號碼（例如：0912345678）！';
+      msgDiv.className = 'error';
+      const phoneInputElem = document.getElementById('userPhone');
+      phoneInputElem.focus();
+      phoneInputElem.select();
+      return;
+    }
+
     if (selectedSlots.length === 0) {
       msgDiv.innerText = '請至少選擇一個預約時段！';
       msgDiv.className = 'error';
@@ -194,7 +207,7 @@
       sport_type: document.getElementById('sportType').value,
       time_slots: selectedSlots,
       name: document.getElementById('userName').value,
-      phone: document.getElementById('userPhone').value
+      phone: phoneVal
     };
 
     try {
