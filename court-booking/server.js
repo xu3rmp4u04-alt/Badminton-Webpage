@@ -22,7 +22,7 @@ app.use(session({
 // 確保資料庫有必要欄位
 db.run(`ALTER TABLE bookings ADD COLUMN is_paid INTEGER DEFAULT 0`, (err) => {});
 db.run(`ALTER TABLE bookings ADD COLUMN created_at TEXT`, (err) => {});
-db.run(`ALTER TABLE bookings ADD COLUMN price INTEGER`, (err) => {}); // 支援自訂價格欄位
+db.run(`ALTER TABLE bookings ADD COLUMN price INTEGER`, (err) => {}); 
 
 const TIME_SLOTS = [
   '08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00',
@@ -62,6 +62,16 @@ function getFormattedTimestamp() {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+// 取得台灣當前日期字串 (YYYY-MM-DD)
+function getTodayDateStr() {
+  const now = new Date();
+  const twTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  const year = twTime.getFullYear();
+  const month = String(twTime.getMonth() + 1).padStart(2, '0');
+  const day = String(twTime.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 app.get('/api/available-slots', (req, res) => {
   const date = req.query.date;
   const sport_type = req.query.sport_type || req.query.court_type || req.query.type;
@@ -81,31 +91,97 @@ app.get('/api/available-slots', (req, res) => {
   });
 });
 
-let idleTimer = null;
-const IDLE_LIMIT = 10 * 60 * 1000;
-let needsAlert = false; 
-
-function sendPing() {
-  needsAlert = true; 
-  const appUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:' + PORT;
-  http.get(`${appUrl}/api/admin/check-auth`, (res) => {}).on('error', (err) => {});
-}
-
-function resetIdleTimer() {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    sendPing();
-    resetIdleTimer();
-  }, IDLE_LIMIT);
-}
-
-app.get('/api/admin/check-alert', requireAdmin, (req, res) => {
-  if (needsAlert) {
-    needsAlert = false;
-    return res.json({ showAlert: true });
+// ==========================================
+// 💡 新增：根據手機號碼查詢未來的預約紀錄
+// ==========================================
+app.get('/api/my-bookings', (req, res) => {
+  const phone = req.query.phone;
+  if (!phone) {
+    return res.status(400).json({ success: false, error: '請輸入手機號碼' });
   }
-  res.json({ showAlert: false });
+
+  const todayStr = getTodayDateStr();
+
+  db.all(
+    `SELECT * FROM bookings WHERE user_phone = ? AND booking_date >= ? ORDER BY booking_date ASC, time_slot ASC`,
+    [phone, todayStr],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ success: false, error: '查詢失敗' });
+      }
+      res.json({ success: true, bookings: rows || [] });
+    }
+  );
 });
+
+// ==========================================
+// 💡 防呆資料交替機制 (10分鐘循環)
+// ==========================================
+let antiSleepTimer = null;
+let isTestDataExist = false; 
+const ANTI_SLEEP_INTERVAL = 10 * 60 * 1000; // 10 分鐘
+
+function runAntiSleepDatabaseToggle() {
+  const testDate = '2026-10-01';
+  const testSlot = '08:00-09:00';
+  const testName = '測試用';
+  const testPhone = '0912345678';
+  const testSport = '羽球';
+
+  if (!isTestDataExist) {
+    const createdAt = getFormattedTimestamp();
+    const defaultPrice = 400;
+    
+    db.get(`SELECT COUNT(*) as count FROM bookings WHERE booking_date = ? AND time_slot = ?`, [testDate, testSlot], (err, row) => {
+      if (!err && row && row.count >= 3) {
+        db.run(`DELETE FROM bookings WHERE user_name = '測試用' AND booking_date = ? AND time_slot = ?`, [testDate, testSlot], () => {});
+      }
+
+      db.all(`SELECT court_id FROM bookings WHERE booking_date = ? AND time_slot = ?`, [testDate, testSlot], (err, courts) => {
+        const usedCourts = (courts || []).map(c => c.court_id);
+        let targetCourt = 1;
+        for (let i = 1; i <= 3; i++) {
+          if (!usedCourts.includes(i)) { targetCourt = i; break; }
+        }
+
+        db.run(
+          `INSERT INTO bookings (court_id, booking_date, time_slot, sport_type, user_name, user_phone, is_paid, created_at, price) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          [targetCourt, testDate, testSlot, testSport, testName, testPhone, createdAt, defaultPrice],
+          (insertErr) => {
+            if (!insertErr) {
+              console.log('🔄 [防呆機制] 已自動【新增】測試預約資料');
+              isTestDataExist = true; 
+            } else {
+              console.log('❌ [防呆機制] 新增失敗:', insertErr.message);
+            }
+          }
+        );
+      });
+    });
+
+  } else {
+    db.run(`DELETE FROM bookings WHERE user_name = '測試用' AND booking_date = ? AND time_slot = ?`, [testDate, testSlot], (err) => {
+      if (!err) {
+        console.log('🔄 [防呆機制] 已自動【刪除】測試預約資料');
+        isTestDataExist = false; 
+      } else {
+        console.log('❌ [防呆機制] 刪除失敗:', err.message);
+      }
+    });
+  }
+}
+
+function resetAntiSleepTimer() {
+  if (antiSleepTimer) clearInterval(antiSleepTimer);
+  antiSleepTimer = setInterval(() => {
+    runAntiSleepDatabaseToggle();
+  }, ANTI_SLEEP_INTERVAL);
+}
+
+function resetActivityTrigger() {
+  resetAntiSleepTimer();
+}
+// ==========================================
 
 app.post('/api/book', (req, res) => {
   const { date, time_slots, name, phone } = req.body;
@@ -151,7 +227,7 @@ app.post('/api/book', (req, res) => {
         }
         completedCount++;
         if (completedCount === assignedBookings.length && !hasError) {
-          resetIdleTimer();
+          resetActivityTrigger(); 
           res.json({ success: true, message: '預約成功！' });
         }
       });
@@ -183,10 +259,9 @@ app.post('/api/admin/logout', (req, res) => {
 });
 
 app.get('/api/admin/bookings', requireAdmin, (req, res) => {
-  const now = new Date();
-  const today = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-
-  db.all(`SELECT * FROM bookings WHERE booking_date >= ? ORDER BY booking_date ASC, time_slot ASC, court_id ASC`, [today], (err, rows) => {
+  const todayStr = getTodayDateStr();
+  
+  db.all(`SELECT * FROM bookings WHERE booking_date >= ? ORDER BY booking_date ASC, time_slot ASC, court_id ASC`, [todayStr], (err, rows) => {
     if (err) return res.status(500).json({ success: false, error: '查詢失敗' });
     
     const bookings = (rows || []).map(b => ({
@@ -198,9 +273,8 @@ app.get('/api/admin/bookings', requireAdmin, (req, res) => {
   });
 });
 
-// 💡 更新價格 API：將傳入的新總金額平均分配更新到該筆訂單的所有相關 id 中
 app.patch('/api/admin/bookings/price', requireAdmin, (req, res) => {
-  const { id, price } = req.body; // 這裡前端傳過來的其實是一個 id 或我們要更新的對象
+  const { id, price } = req.body;
   if (id === undefined || price === undefined) {
     return res.status(400).json({ success: false, error: '參數無效' });
   }
@@ -228,12 +302,12 @@ app.delete('/api/admin/bookings', requireAdmin, (req, res) => {
 
   const placeholders = ids.map(() => '?').join(',');
   db.run(`DELETE FROM bookings WHERE id IN (${placeholders})`, [...ids], function(err) {
-    if (err) return res.status(500).json({ success: false, error: '刪除失敗' });
+    if (err) return res.status(500).json({ error: '刪除失敗' });
     res.json({ success: true });
   });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 伺服器啟動於 http://localhost:${PORT}`);
-  resetIdleTimer();
+  resetAntiSleepTimer(); 
 });

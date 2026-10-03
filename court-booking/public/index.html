@@ -23,6 +23,13 @@
     
     .submit-btn { width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }
     .submit-btn:hover { background-color: #218838; }
+
+    /* 查詢區塊樣式 */
+    .query-section { border-top: 2px dashed #eee; margin-top: 30px; padding-top: 20px; }
+    .query-btn { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+    .query-btn:hover { background-color: #0056b3; }
+    .result-box { margin-top: 15px; background: #f8f9fa; padding: 10px; border-radius: 6px; font-size: 14px; }
+
     #msg { text-align: center; margin-top: 15px; font-weight: bold; }
     .success { color: #28a745; }
     .error { color: #dc3545; }
@@ -38,6 +45,7 @@
     <div class="form-group">
       <label for="sportType">1. 選擇球類運動：</label>
       <select id="sportType" required>
+        <option value="" disabled selected>請選擇球類運動</option>
         <option value="羽球">羽球</option>
         <option value="匹克球">匹克球</option>
       </select>
@@ -51,7 +59,7 @@
     <div class="form-group">
       <label>3. 選擇時段：<span class="tip">(可複選多個時段)</span></label>
       <div id="slotsContainer" class="slots-grid">
-        <div style="grid-column: span 2; text-align: center; color: #888;">請先選擇日期</div>
+        <div style="grid-column: span 2; text-align: center; color: #888;">請先選擇球類與日期</div>
       </div>
     </div>
 
@@ -75,23 +83,29 @@
   </form>
 
   <div id="msg"></div>
+
+  <!-- 查詢我的預約介面 -->
+  <div class="query-section">
+    <label for="queryPhone">🔍 忘記預約時間？查詢我的預約：</label>
+    <input type="tel" id="queryPhone" placeholder="請輸入您的手機號碼" style="margin-top: 5px;">
+    <button type="button" class="query-btn" onclick="queryMyBookings()">查詢預約紀錄</button>
+    <div id="queryResult" class="result-box" style="display: none;"></div>
+  </div>
 </div>
 
 <script>
   let selectedSlots = [];
 
-  // 取得台灣當前日期 (YYYY-MM-DD)，確保時區不會因為伺服器或瀏覽器落後一天
+  // 取得台灣當前日期 (YYYY-MM-DD)
   const now = new Date();
   const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
   
   const dateInput = document.getElementById('bookingDate');
-  dateInput.value = todayStr; // 預設選取今天
-  dateInput.min = todayStr;   // 限制最小日期為今天（無法選取過去的日期）
+  dateInput.value = todayStr;
+  dateInput.min = todayStr;
 
   document.getElementById('bookingDate').addEventListener('change', fetchSlots);
   document.getElementById('sportType').addEventListener('change', fetchSlots);
-
-  fetchSlots();
 
   async function fetchSlots() {
     const date = document.getElementById('bookingDate').value;
@@ -100,7 +114,14 @@
     selectedSlots = [];
     updateTotalPrice();
 
-    if (!date) return;
+    if (!sportType) {
+      container.innerHTML = '<div style="grid-column: span 2; text-align: center; color: #888;">請先選擇球類運動</div>';
+      return;
+    }
+    if (!date) {
+      container.innerHTML = '<div style="grid-column: span 2; text-align: center; color: #888;">請先選擇預約日期</div>';
+      return;
+    }
 
     try {
       const response = await fetch(`/api/available-slots?date=${date}&sport_type=${encodeURIComponent(sportType)}`);
@@ -129,7 +150,7 @@
     updateTotalPrice();
   }
 
-  // 💰 算錢邏輯：離峰 $400 / 尖峰 $600
+  // 算錢邏輯：離峰 $400 / 尖峰 $600
   function updateTotalPrice() {
     const priceBox = document.getElementById('priceBox');
     const totalPriceSpan = document.getElementById('totalPrice');
@@ -144,7 +165,7 @@
     if (!dateStr) return;
 
     const selectedDate = new Date(dateStr);
-    const dayOfWeek = selectedDate.getDay(); // 0 是週日，6 是週六
+    const dayOfWeek = selectedDate.getDay(); 
     const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
 
     let totalPrice = 0;
@@ -177,14 +198,88 @@
     priceBox.style.display = 'block';
   }
 
+  // 查詢我的預約邏輯（含時段合併、隱藏場地編號）
+  async function queryMyBookings() {
+    const phone = document.getElementById('queryPhone').value.trim();
+    const resultBox = document.getElementById('queryResult');
+    resultBox.style.display = 'block';
+
+    const phoneRegex = /^09\d{8}$/;
+    if (!phoneRegex.test(phone)) {
+      resultBox.innerHTML = '<span style="color: red;">請輸入有效的手機號碼（09開頭共10碼）</span>';
+      return;
+    }
+
+    resultBox.innerHTML = '查詢中...';
+
+    try {
+      const response = await fetch(`/api/my-bookings?phone=${phone}`);
+      const data = await response.json();
+
+      if (data.success) {
+        if (data.bookings.length === 0) {
+          resultBox.innerHTML = '查無您近期未來的預約紀錄。';
+        } else {
+          const dateMap = {};
+          data.bookings.forEach(b => {
+            if (!dateMap[b.booking_date]) {
+              dateMap[b.booking_date] = { sport: b.sport_type, slots: [] };
+            }
+            const parts = b.time_slot.split('-');
+            const startHour = parseInt(parts[0].split(':')[0], 10);
+            const endHour = parseInt(parts[1].split(':')[0], 10);
+            dateMap[b.booking_date].slots.push({ start: startHour, end: endHour });
+          });
+
+          let html = '<b>您的預約紀錄如下：</b><ul style="padding-left: 20px; margin: 5px 0 0 0;">';
+          
+          for (const [date, info] of Object.entries(dateMap)) {
+            let slots = info.slots.sort((a, b) => a.start - b.start);
+            let mergedRanges = [];
+            
+            let currentRange = { start: slots[0].start, end: slots[0].end };
+            for (let i = 1; i < slots.length; i++) {
+              if (slots[i].start === currentRange.end) {
+                currentRange.end = slots[i].end;
+              } else {
+                mergedRanges.push(currentRange);
+                currentRange = { start: slots[i].start, end: slots[i].end };
+              }
+            }
+            mergedRanges.push(currentRange);
+
+            let timeStrList = mergedRanges.map(r => {
+              return `${r.start}-${r.end}`;
+            });
+
+            html += `<li><b>${date}</b> (${info.sport})：${timeStrList.join(', ')} 點</li>`;
+          }
+
+          html += '</ul>';
+          resultBox.innerHTML = html;
+        }
+      } else {
+        resultBox.innerHTML = '<span style="color: red;">查詢失敗，請稍後再試。</span>';
+      }
+    } catch (err) {
+      resultBox.innerHTML = '<span style="color: red;">系統連線錯誤。</span>';
+    }
+  }
+
   document.getElementById('bookingForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msgDiv = document.getElementById('msg');
     msgDiv.innerText = '';
     msgDiv.className = '';
 
+    const sportTypeVal = document.getElementById('sportType').value;
+    if (!sportTypeVal) {
+      msgDiv.innerText = '請先選擇球類運動！';
+      msgDiv.className = 'error';
+      return;
+    }
+
     const phoneVal = document.getElementById('userPhone').value.trim();
-    // 嚴格檢查台灣手機號碼格式 (09 開頭，共 10 碼數字)
     const phoneRegex = /^09\d{8}$/;
 
     if (!phoneRegex.test(phoneVal)) {
@@ -204,7 +299,7 @@
 
     const payload = {
       date: document.getElementById('bookingDate').value,
-      sport_type: document.getElementById('sportType').value,
+      sport_type: sportTypeVal,
       time_slots: selectedSlots,
       name: document.getElementById('userName').value,
       phone: phoneVal
