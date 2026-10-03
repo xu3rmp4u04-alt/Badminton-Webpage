@@ -260,19 +260,23 @@ app.post('/api/book', async (req, res) => {
 
 app.post('/api/admin/login', async (req, res) => {
   const { username, password } = req.body;
-  const { data: admin } = await db
+  
+  const { data: admins, error } = await db
     .from('admins')
     .select('*')
     .eq('username', username)
-    .eq('password', password)
-    .single();
+    .eq('password', password);
 
-  if (admin) {
-    req.session.isAdmin = true;
-    res.json({ success: true, message: '登入成功' });
-  } else {
-    res.status(401).json({ success: false, message: '帳號或密碼錯誤' });
+  console.log('🔍 登入嘗試 - 帳號:', username);
+  console.log('🔍 資料庫查詢結果:', admins);
+  console.log('🔍 資料庫錯誤訊息:', error);
+
+  if (error || !admins || admins.length === 0) {
+    return res.status(401).json({ success: false, message: '帳號或密碼錯誤', debug: error });
   }
+
+  req.session.isAdmin = true;
+  res.json({ success: true, message: '登入成功' });
 });
 
 app.get('/api/admin/check-auth', (req, res) => {
