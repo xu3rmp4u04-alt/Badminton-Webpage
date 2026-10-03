@@ -45,8 +45,7 @@
     <div class="form-group">
       <label for="sportType">1. 選擇球類運動：</label>
       <select id="sportType" required>
-        <option value="" disabled selected>請選擇球類運動</option>
-        <option value="羽球">羽球</option>
+        <option value="羽球" selected>羽球</option>
         <option value="匹克球">匹克球</option>
       </select>
     </div>
@@ -59,7 +58,7 @@
     <div class="form-group">
       <label>3. 選擇時段：<span class="tip">(可複選多個時段)</span></label>
       <div id="slotsContainer" class="slots-grid">
-        <div style="grid-column: span 2; text-align: center; color: #888;">請先選擇球類與日期</div>
+        <div style="grid-column: span 2; text-align: center; color: #888;">載入時段中...</div>
       </div>
     </div>
 
@@ -103,6 +102,9 @@
   const dateInput = document.getElementById('bookingDate');
   dateInput.value = todayStr;
   dateInput.min = todayStr;
+
+  // 💡 網頁載入時自動抓取今天的預約時段
+  fetchSlots();
 
   document.getElementById('bookingDate').addEventListener('change', fetchSlots);
   document.getElementById('sportType').addEventListener('change', fetchSlots);
@@ -198,7 +200,7 @@
     priceBox.style.display = 'block';
   }
 
-  // 查詢我的預約邏輯（含時段合併、隱藏場地編號）
+  // 查詢我的預約邏輯
   async function queryMyBookings() {
     const phone = document.getElementById('queryPhone').value.trim();
     const resultBox = document.getElementById('queryResult');

@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ==========================================
-// 💡 Supabase 設定 (請填入您的 Project URL 與 Secret Key)
+// 💡 Supabase 設定
 // ==========================================
 const SUPABASE_URL = 'https://jcnnbopcglsinvjewzpq.supabase.co';
 const SUPABASE_KEY = 'sb_secret_5s_15EHnaBiQ5FJpgcj5g_dx1zjWT'; 
@@ -281,6 +281,11 @@ app.post('/api/admin/login', async (req, res) => {
 
 app.get('/api/admin/check-auth', (req, res) => {
   res.json({ authenticated: !!(req.session && req.session.isAdmin) });
+});
+
+// 💡 補上管理員前端輪詢所需的 check-alert 路由
+app.get('/api/admin/check-alert', (req, res) => {
+  res.json({ showAlert: false });
 });
 
 app.post('/api/admin/logout', (req, res) => {
