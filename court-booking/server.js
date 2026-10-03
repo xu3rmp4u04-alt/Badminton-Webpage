@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // 💡 Supabase 設定
 // ==========================================
 const SUPABASE_URL = 'https://jcnnbopcglsinvjewzpq.supabase.co';
-const SUPABASE_KEY = 'sb_secret_5s_15EHnaBiQ5FJpgcj5g_dx1zjWT'; 
+const SUPABASE_KEY = process.env.SUPABASE_KEY; 
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 app.use(bodyParser.json());
